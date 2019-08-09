@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta http-equiv="X-UA-Compatible" content="ie=edge">
+	<title>植物大战僵尸辅助</title>
+	<script src="./eejs-api.min.js"></script>
+	<script src="./jquery-1.12.4.min.js"></script>
+	<link href="./bootstrap.css" rel="stylesheet"/>
+	<style>
+	html,body{padding: 5px; margin: 0; overflow: hidden;}
+	.line{ line-height: 32px; width: 100%; margin: 5px;}
+	.line .form-control {width: 150px;}
+	</style>
+</head>
+
+<body>
+	<button class="btn btn-warning" onclick="document.location.reload()">重新加载</button>
+	<div class="line" id="msg"></div>
+	<div class="line" id="step"></div>
+	<div class="line form-group form-inline">
+		<label for="sunshine">阳光值：<input class="form-control" id="sunshine" value="9999" /></label>
+		<button class="btn btn-success" onclick="editSunshine('write')" id="btn-sunshine">修改阳光</button>
+		<button class="btn btn-success" onclick="editSunshine('write', 9990)">阳光 9990</button>
+	</div>
+	<div class="line form-group form-inline">
+		<label for="gold">金币值：<input class="form-control" id="gold" value="9999" /></label>
+		<button class="btn btn-success" onclick="editGold('write')" id="btn-gold">修改金币</button>
+		<button class="btn btn-success" onclick="editGold('write', 99999)">金币 999990</button>
+	</div>
+	<div class="line form-group form-inline">
+		<label for="cooling"><input type="checkbox" id="cooling" /> 快速冷却</label>
+		&nbsp;&nbsp;&nbsp;&nbsp;<label for="kill"><input type="checkbox" id="kill" /> 一击必杀</label>
+	</div>
+	<div class="line form-group form-inline">
+		<label for="autoplace"><input type="checkbox" id="autoplace" /> 自动放置樱桃炸弹</label>
+		&nbsp;&nbsp;&nbsp;&nbsp;<label for="active"><input type="checkbox" id="active" /> 保持窗口激活</label>	
+	</div>
+	<script type="text/javascript">		
+		ee.AppConfig({
+			"title": "植物大战僵尸辅助",
+			"hideWindow": false, 
+			"width": 520, 
+			"height": 370, 
+			"debug": false,
+			"log2file": false,
+			"max": false,
+			"min": true,
+			"close": true,
+			"resize": true,
+			"border": true
+		});		
+		var processId = 0;
+		var baseAddress = 0;
+		var address1 = 0; // 2AA00C
+		var address2 = 0; // 2A9EC0
+		var address3 = 0; // 2A9F38
+		var address4 = 0; // 2A9F78
+		var gameWindowHwnd = 0;
+		var sunshineAddress = 0;
+		var goldAddress = 0;
+		var coolingAddress = 0;
+		var yintaoImage = -1;
+		var step = 0;
+		function init(){				
+			setInterval(function(){				
+				if(step == 0){
+					step = 1;						
+					getProcessId();// 获取游戏进程ID	
+				} else if(step == 2){
+					step = 3;
+					getGameAddress();// 获取游戏基址	
+				} else if(step == 4){
+					step = 5;
+					initAddress();// 初始化地址数据
+				} else if(step == 6){				
+					step = 7;
+					editGold(); // 修改金币	
+					
+					editSunshine(); // 修改阳光	
+
+					addImage(); // 上传图片
+					step = 8;
+				} else if(step == 8){
+					timeCooling(); // 快速冷却
+
+					getCpuUse(); // 获取CPU使用率
+				}
+			}, 1000);
+		}
+
+		function getProcessId(){
+			ee.processGetidName({name: 'PlantsVsZombies.exe'}, function(ret){
+				console.info(ret);
+				if(ret.list && ret.list.length > 0 && ret.list[0] > 0){
+					processId = ret.list[0];
+					step = 2;
+					$('#msg').text("游戏已找到，进程ID：" + processId);
+				} else {
+					step = 0;
+					$('#msg').text("游戏未启动");
+				}
+			});
+		}
+
+		function getGameAddress(){
+			ee.processGetMobuleHwnd({pid: processId, name: "PlantsVsZombies.exe"}, function(ret){
+				if(ret.hwnd){
+					baseAddress = ret.hwnd;
+					console.info("baseAddress=>>" + baseAddress);
+					step = 4;					
+				} else {
+					step = 2;
+				}
+			});
+		}
+
+		function initAddress(){
+			if(baseAddress > 0){
+				address1 = baseAddress + 0x2AA00C;
+				address2 = baseAddress + 0x2A9EC0;
+				address3 = baseAddress + 0x2A9F38;
+				address4 = baseAddress + 0x2A9F78;
+			}
+
+			ee.windowFindHwnd({className: "MainWindow", title: "植物大战僵尸中文版"}, function(ret){
+				if(ret.hwnd){
+					gameWindowHwnd = ret.hwnd;
+					step = 6;
+				} else {
+					step = 4;
+				}
+			});
+		}
+
+		function editSunshine(flag, value){
+			var sunshine = value ? value : $('#sunshine').val();
+			if(sunshine <= 0){
+				return;
+			}
+			var startEdit = function(){
+				if(flag == 'write'){
+					ee.processWriteInt({"pid": processId, "address": sunshineAddress, "data": sunshine});
+				}					
+				ee.processReadInt ({"pid": processId, "address": sunshineAddress}, function(ret){
+					$('#sunshine').val(ret.value);
+				});
+			}
+			if(sunshineAddress == 0){ // 如果阳光地址=0，则获取阳光内存地址
+				ee.processReadInt({"pid": processId, "address": address1}, function(ret){
+					var oneAddress = ret.value  + 0x768;
+					console.info("一级偏移：" + oneAddress);
+					ee.processReadInt({"pid": processId, "address": oneAddress}, function(ret2){
+						sunshineAddress = ret2.value + 0x5560;
+						console.info("阳光地址：" + sunshineAddress);
+						startEdit();
+					});
+				});
+			} else {// 如果阳光地址 != 0，则直接修改
+				startEdit();
+			}	
+		}
+
+		function editGold(flag, value){
+			var gold = value ? value : $('#gold').val();
+			if(gold <= 0){
+				return;
+			}
+			var startEdit = function(){
+				if(flag == 'write'){
+					ee.processWriteInt({"pid": processId, "address": goldAddress, "data": gold});
+				}
+				ee.processReadInt ({"pid": processId, "address": goldAddress}, function(ret){
+					$('#gold').val(ret.value * 10);
+				});
+			}
+			if(goldAddress == 0){
+				ee.processReadInt({"pid": processId, "address": address1}, function(ret){
+					var oneAddress = ret.value  + 0x82C;
+					console.info("一级偏移：" + oneAddress);
+					ee.processReadInt({"pid": processId, "address": oneAddress}, function(ret2){
+						goldAddress = ret2.value + 0x28;
+						console.info("金币地址：" + goldAddress);
+						startEdit();
+					});
+				});
+			} else {
+				startEdit();
+			}			
+		}
+
+		function timeCooling(){
+			if(!$('#cooling').is(":checked")){
+				coolingAddress = 0;
+				return;
+			}
+			var startEdit = function(){
+				for(var i = 1; i <= 10; i++){
+					ee.processWriteInt({"pid": processId, "address": coolingAddress + 32 + (80 * i), "data": 1});
+				}
+			}
+			if(coolingAddress == 0){
+				ee.processReadInt({"pid": processId, "address": address1}, function(ret){
+					var oneAddress = ret.value  + 0x768;
+					console.info("一级偏移：" + oneAddress);
+					ee.processReadInt({"pid": processId, "address": oneAddress}, function(ret2){
+						var twoAddress = ret2.value + 0x144;
+						console.info("二级地址：" + twoAddress);
+						ee.processReadInt({"pid": processId, "address": twoAddress}, function(ret3){
+							coolingAddress = ret3.value;
+							startEdit();
+						});
+					});
+				});
+			} else {
+				startEdit();
+			}			
+		}
+
+		function getCpuUse(){
+			ee.processCpuUse({"size": 2}, function(ret){
+				$('#step').text('CPU 使用率：' + ret.value);
+			});
+		}
+
+		function keepActive(){
+			var keep = $('#active').is(":checked");
+			if(keep){
+				ee.windowKeepActive({"hwnd": gameWindowHwnd});
+			} else {
+				ee.windowUnkeepActive();
+			}
+		}
+
+		function addImage(){
+			//0(png)。1(bmp)、2(gif)、3(jpg)、4(tif)
+			ee.funcAddFile({"path": "yintao.jpg"}, function(ret){
+				yintaoImage = ret.value;
+				$('#step').text('-yintao-->' + yintaoImage);
+			});
+		}
+
+		var interIndex = -1;
+		function autoplace(){
+			console.info("自动放置樱桃炸弹：yintaoImage = " + yintaoImage);
+			if(yintaoImage <= 0){
+				return;
+			}
+			var place = $('#autoplace').is(":checked");
+			if(place){
+				interIndex = setInterval(function(){
+					ee.windowFindImage({"hwnd": gameWindowHwnd, "index": yintaoImage, "left": 0, "top": 0, "width": 800, "height": 90, "similarity": 50, "format": 3}, function(ret){
+						console.info("自动放置樱桃炸弹： " + ret.x +", "+ ret.y);
+						if(ret.x > 0 && ret.y > 0){
+							ee.windowMouse({"hwnd": gameWindowHwnd, "x": ret.x, "y": ret.y, "type": 0});
+							setTimeout(function(){
+								ee.windowMouse({"hwnd": gameWindowHwnd, "x": 475, "y": 239, "type": 0});
+							}, 400);
+							setTimeout(function(){
+								ee.windowMouse({"hwnd": gameWindowHwnd, "x": ret.x, "y": ret.y, "type": 0});
+							}, 1200);
+							setTimeout(function(){
+								ee.windowMouse({"hwnd": gameWindowHwnd, "x": 475, "y": 434, "type": 0});
+							}, 1500);
+						}
+					});
+				}, 4000);
+			} else if(interIndex >= 0){
+				clearInterval(interIndex);
+				interIndex = -1;
+			}						
+		}
+
+		var 普通豌豆攻击力 = 20;
+		var 冰豌豆攻击力 = 20;
+		var 卷心菜攻击力 = 40;
+		var 普通西瓜攻击力 = 80;
+		var 孢子攻击力 = 20;
+		var 冰西瓜攻击力 = 80;
+		var 火豌豆攻击力 = 40;
+		var 星星攻击力 = 20;
+		var 尖刺攻击力 = 75;
+		var 篮球攻击力 = 20;
+		var 玉米粒攻击力 = 40;
+		var 黄油攻击力 = 20;
+		function oneKill(){
+			var kill = $('#kill').is(":checked");
+			if(kill){ // 修改植物的攻击力，达到必杀效果
+				普通豌豆攻击力 = 90000;
+				冰豌豆攻击力 = 90000;
+				卷心菜攻击力 = 90000;
+				普通西瓜攻击力 = 90000;
+				孢子攻击力 = 90000;
+				冰西瓜攻击力 = 90000;
+				火豌豆攻击力 = 90000;
+				星星攻击力 = 90000;
+				尖刺攻击力 = 90000;
+				篮球攻击力 = 90000;
+				玉米粒攻击力 = 90000;
+				黄油攻击力 = 90000;
+			} else { // 恢复到原来的攻击力
+				普通豌豆攻击力 = 20;
+				冰豌豆攻击力 = 20;
+				卷心菜攻击力 = 40;
+				普通西瓜攻击力 = 80;
+				孢子攻击力 = 20;
+				冰西瓜攻击力 = 80;
+				火豌豆攻击力 = 40;
+				星星攻击力 = 20;
+				尖刺攻击力 = 75;
+				篮球攻击力 = 20;
+				玉米粒攻击力 = 40;
+				黄油攻击力 = 20;
+			}
+			ee.processWriteInt({"pid": processId, "address": baseAddress + 0x29F1C8, "data": 普通豌豆攻击力});
+			ee.processWriteInt({"pid": processId, "address": baseAddress + 0x29F1D4, "data": 冰豌豆攻击力});
+			ee.processWriteInt({"pid": processId, "address": baseAddress + 0x29F1E0, "data": 卷心菜攻击力});
+			ee.processWriteInt({"pid": processId, "address": baseAddress + 0x29F1EC, "data": 普通西瓜攻击力});
+			ee.processWriteInt({"pid": processId, "address": baseAddress + 0x29F1F8, "data": 孢子攻击力});
+			ee.processWriteInt({"pid": processId, "address": baseAddress + 0x29F204, "data": 冰西瓜攻击力});
+			ee.processWriteInt({"pid": processId, "address": baseAddress + 0x29F210, "data": 火豌豆攻击力});
+			ee.processWriteInt({"pid": processId, "address": baseAddress + 0x29F21C, "data": 星星攻击力});
+			ee.processWriteInt({"pid": processId, "address": baseAddress + 0x29F228, "data": 尖刺攻击力});
+			ee.processWriteInt({"pid": processId, "address": baseAddress + 0x29F234, "data": 篮球攻击力});
+			ee.processWriteInt({"pid": processId, "address": baseAddress + 0x29F240, "data": 玉米粒攻击力});
+			ee.processWriteInt({"pid": processId, "address": baseAddress + 0x29F258, "data": 黄油攻击力});
+		}
+
+		$(window).on('load', function(){
+			init();
+
+			$('#cooling').on('click', function(){
+				timeCooling();
+			});
+			$('#kill').on('click', function(){
+				oneKill();
+			});
+			$('#autoplace').on('click', function(){
+				autoplace();
+			});
+			$('#active').on('click', function(){
+				keepActive();
+			});
+		});
+		
+		
+	</script>
+</body>
+
+</html>
